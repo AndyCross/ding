@@ -47,17 +47,32 @@ struct HookInstaller {
     
     /// Path to the ding executable
     private static var dingPath: String {
-        // Try to find ding in PATH or use current executable
+        let fm = FileManager.default
+        
+        // Prefer the app bundle path (most reliable)
+        let appBundlePath = "/Applications/Ding.app/Contents/MacOS/ding"
+        if fm.isExecutableFile(atPath: appBundlePath) {
+            return appBundlePath
+        }
+        
+        // Try /usr/local/bin/ding (symlink to app bundle)
+        let localBinPath = "/usr/local/bin/ding"
+        if fm.isExecutableFile(atPath: localBinPath) {
+            return localBinPath
+        }
+        
+        // Try to find ding in PATH
         if let path = ProcessInfo.processInfo.environment["PATH"] {
             for dir in path.split(separator: ":") {
                 let fullPath = "\(dir)/ding"
-                if FileManager.default.isExecutableFile(atPath: fullPath) {
+                if fm.isExecutableFile(atPath: fullPath) {
                     return fullPath
                 }
             }
         }
-        // Fallback to /usr/local/bin/ding
-        return "/usr/local/bin/ding"
+        
+        // Fallback to app bundle path (even if not found, for fresh installs)
+        return appBundlePath
     }
     
     // MARK: - Detection

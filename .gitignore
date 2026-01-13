@@ -30,6 +30,7 @@ DerivedData/
 *.o
 *.a
 *.dylib
+Ding.app/
 
 # Test output
 *.xcresult/

@@ -68,15 +68,28 @@ struct Preset {
     
     /// Get the URL for an agent's icon
     /// Icons are looked up in multiple locations:
-    /// 1. ~/.ding/icons/ (user-installed icons)
-    /// 2. /usr/local/share/ding/icons/ (system-installed icons)
-    /// 3. Relative to executable (for development)
+    /// 1. App bundle Resources/icons/ (primary for .app)
+    /// 2. ~/.ding/icons/ (user-installed icons)
+    /// 3. /usr/local/share/ding/icons/ (system-installed icons)
+    /// 4. Relative to executable (for development)
     static func iconURL(for agent: Agent) -> URL? {
         guard let iconName = agent.iconName else { return nil }
         let fm = FileManager.default
         let iconFilename = "\(iconName).png"
         
-        // 1. User directory: ~/.ding/icons/
+        // 1. App bundle Resources/icons/ (Ding.app/Contents/Resources/icons/)
+        let executableURL = URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath()
+        let bundleResourcesPath = executableURL
+            .deletingLastPathComponent()  // MacOS/
+            .deletingLastPathComponent()  // Contents/
+            .appendingPathComponent("Resources")
+            .appendingPathComponent("icons")
+            .appendingPathComponent(iconFilename)
+        if fm.fileExists(atPath: bundleResourcesPath.path) {
+            return bundleResourcesPath
+        }
+        
+        // 2. User directory: ~/.ding/icons/
         let userIconsDir = fm.homeDirectoryForCurrentUser
             .appendingPathComponent(".ding")
             .appendingPathComponent("icons")
@@ -85,15 +98,14 @@ struct Preset {
             return userIconPath
         }
         
-        // 2. System directory: /usr/local/share/ding/icons/
+        // 3. System directory: /usr/local/share/ding/icons/
         let systemIconPath = URL(fileURLWithPath: "/usr/local/share/ding/icons")
             .appendingPathComponent(iconFilename)
         if fm.fileExists(atPath: systemIconPath.path) {
             return systemIconPath
         }
         
-        // 3. Relative to executable (development/portable)
-        let executableURL = URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath()
+        // 4. Relative to executable (development/portable)
         let executableDir = executableURL.deletingLastPathComponent()
         
         // Check icons/ subdirectory next to executable
@@ -104,15 +116,14 @@ struct Preset {
             return relativeIconPath
         }
         
-        // Check ../share/ding/icons/ (typical install layout)
-        let shareIconPath = executableDir
+        // Check ../Resources/icons/ (app bundle from MacOS/)
+        let altBundlePath = executableDir
             .deletingLastPathComponent()
-            .appendingPathComponent("share")
-            .appendingPathComponent("ding")
+            .appendingPathComponent("Resources")
             .appendingPathComponent("icons")
             .appendingPathComponent(iconFilename)
-        if fm.fileExists(atPath: shareIconPath.path) {
-            return shareIconPath
+        if fm.fileExists(atPath: altBundlePath.path) {
+            return altBundlePath
         }
         
         return nil

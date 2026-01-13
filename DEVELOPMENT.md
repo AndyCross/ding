@@ -2,15 +2,24 @@
 
 ## Architecture
 
-Ding uses Swift with the `ArgumentParser` package for CLI parsing and `osascript` for notifications. It's a native macOS port of [shanselman/toasty](https://github.com/shanselman/toasty).
+Ding is a macOS app bundle that functions as a CLI tool. It uses `UNUserNotificationCenter` for native notifications (appears in System Settings → Notifications) and `ArgumentParser` for CLI parsing.
 
 ### Key Components
 
-- **Swift Package Manager**: Modern dependency management and build system
+- **App Bundle**: `Ding.app` with proper `Info.plist` for notification permissions
+- **UNUserNotificationCenter**: Native macOS notification API
 - **ArgumentParser**: Apple's official CLI parsing library
-- **osascript**: macOS built-in scripting for notifications (no bundle required)
 - **sysctl/libproc**: Low-level macOS APIs for process tree inspection
 - **JSON Config**: Direct manipulation of AI agent settings files
+
+### Why an App Bundle?
+
+macOS requires an app bundle with a valid `CFBundleIdentifier` for `UNUserNotificationCenter` to work properly. Benefits:
+
+1. **Appears in Notification Settings**: Users can configure Ding's notifications in System Settings → Notifications → Ding
+2. **Proper Permission Flow**: macOS prompts for notification permission on first use
+3. **Reliable Delivery**: No dependency on `osascript` or external tools
+4. **Future-Proof**: Uses Apple's recommended notification API
 
 ### Why Swift?
 
@@ -20,34 +29,14 @@ Ding uses Swift with the `ArgumentParser` package for CLI parsing and `osascript
 4. **No Runtime**: Unlike .NET or Java, no additional runtime needed
 5. **Maintained**: Actively developed by Apple, guaranteed macOS compatibility
 
-### Why Not Objective-C?
+### Why Not osascript?
 
-Swift is the modern choice for macOS development. While Objective-C would work, Swift provides:
-- Better type safety and error handling
-- Cleaner syntax for CLI tools
-- Modern async/await patterns
-- Better interop with Swift packages like ArgumentParser
+The original implementation used `osascript` for notifications:
+- Unreliable: Depends on Script Editor's notification permissions
+- No dedicated settings: Notifications attributed to "Script Editor"
+- Limited features: No custom icons, limited sound options
 
-### Why Not AppKit/SwiftUI for Notifications?
-
-For a CLI tool, using `UNUserNotificationCenter` requires:
-- An app bundle with `Info.plist`
-- A valid bundle identifier
-- More complex build/distribution setup
-
-Using `osascript` instead:
-- Works from any executable
-- No bundle required
-- Inherits permissions from terminal
-- More reliable for CLI tools
-
-### Why Not terminal-notifier?
-
-While `terminal-notifier` is a popular option, Ding:
-- Has zero dependencies (self-contained binary)
-- Includes agent auto-detection
-- Manages hook installation
-- Is specifically designed for AI coding agents
+The app bundle approach solves all these issues.
 
 ## Building
 
@@ -60,35 +49,99 @@ While `terminal-notifier` is a popular option, Ding:
 ### Build Commands
 
 ```bash
-# Debug build
-swift build
+# Build Ding.app (debug)
+./scripts/build-app.sh
 
-# Release build (optimized)
+# Build Ding.app (release, optimized)
+./scripts/build-app.sh --release
+
+# Just compile (no app bundle)
 swift build -c release
-
-# Run tests (if any)
-swift test
-
-# Clean build
-swift package clean
 ```
 
-### Build for Universal Binary (Intel + Apple Silicon)
+### What build-app.sh Does
+
+1. Runs `swift build -c release`
+2. Creates `Ding.app/Contents/` structure
+3. Copies binary to `Ding.app/Contents/MacOS/ding`
+4. Copies `Info.plist` to `Ding.app/Contents/`
+5. Copies icons to `Ding.app/Contents/Resources/icons/`
+
+### Install Locally
 
 ```bash
-# Build for both architectures
-swift build -c release --arch arm64 --arch x86_64
+# Build
+./scripts/build-app.sh --release
 
-# Or manually:
-swift build -c release --arch arm64
-swift build -c release --arch x86_64
-lipo -create \
-  .build/arm64-apple-macosx/release/ding \
-  .build/x86_64-apple-macosx/release/ding \
-  -output ding-universal
+# Install to Applications
+cp -r Ding.app /Applications/
+
+# Create CLI symlink
+sudo ln -sf /Applications/Ding.app/Contents/MacOS/ding /usr/local/bin/ding
+
+# Test
+ding "Test" -t "Development"
 ```
 
-## How Parent Process Detection Works
+## App Bundle Structure
+
+```
+Ding.app/
+├── Contents/
+│   ├── Info.plist              # Bundle metadata, notification keys
+│   ├── MacOS/
+│   │   └── ding                # The Swift binary
+│   └── Resources/
+│       ├── icons/              # Agent icons (PNG)
+│       │   ├── claude.png
+│       │   ├── copilot.png
+│       │   └── ...
+│       └── VERSION             # Version file
+```
+
+### Info.plist Keys
+
+| Key | Purpose |
+|-----|---------|
+| `CFBundleIdentifier` | `com.ding.cli` - identifies app to macOS |
+| `LSUIElement` | `true` - no dock icon, background app |
+| `NSUserNotificationAlertStyle` | `alert` - enables notifications |
+
+## Code Structure
+
+```
+Sources/ding/
+├── main.swift              # CLI entry point, ArgumentParser commands
+│   ├── Ding                - Root command
+│   ├── Notify              - Send notification (default)
+│   ├── Install             - Install agent hooks
+│   ├── Uninstall           - Remove agent hooks
+│   └── Status              - Show installation status
+│
+├── NotificationManager.swift
+│   ├── requestPermission() - Ask for notification access
+│   ├── checkAuthorizationStatus() - Check current permission
+│   └── send()              - Post notification via UNUserNotificationCenter
+│
+├── AgentDetector.swift
+│   ├── detect()            - Walk process tree
+│   ├── getProcessInfo()    - Query process name/cmdline via sysctl
+│   └── getParentPID()      - Get parent via proc_pidinfo
+│
+├── HookInstaller.swift
+│   ├── HookTarget enum     - Claude, Gemini, Copilot
+│   ├── detect()            - Check if agent config exists
+│   ├── isInstalled()       - Check for existing hooks
+│   ├── install()           - Add hook to config
+│   └── uninstall()         - Remove hook from config
+│
+└── Presets.swift
+    ├── Agent enum          - Known AI agents
+    ├── Preset struct       - Title, icon, sound config
+    └── iconURL()           - Locate icon in bundle/user dir
+```
+
+## Parent Process Detection
 
 Ding walks the process tree to find known AI CLI tools:
 
@@ -99,12 +152,7 @@ Ding walks the process tree to find known AI CLI tools:
 | Cursor | `cursor` in process name |
 | Copilot/Codex | Process name match |
 
-### Implementation Details
-
-1. **Get parent PID**: `getppid()` returns direct parent
-2. **Query process info**: `proc_pidinfo()` with `PROC_PIDTBSDINFO` 
-3. **Get command line**: `sysctl()` with `KERN_PROCARGS2`
-4. **Walk up tree**: Repeat with parent's parent until match or root
+### Implementation
 
 ```swift
 // Simplified detection flow
@@ -118,60 +166,32 @@ while currentPID > 1 {
 }
 ```
 
-## Code Structure
+Uses:
+- `getppid()` for direct parent PID
+- `proc_pidinfo()` with `PROC_PIDTBSDINFO` for process info
+- `sysctl()` with `KERN_PROCARGS2` for command line
 
-```
-Sources/ding/
-├── main.swift              # CLI entry point, subcommands
-│   ├── Ding                - Root command
-│   ├── Notify              - Send notification (default)
-│   ├── Install             - Install agent hooks
-│   ├── Uninstall           - Remove agent hooks
-│   └── Status              - Show installation status
-│
-├── NotificationManager.swift
-│   └── send()              - osascript-based notification
-│
-├── AgentDetector.swift
-│   ├── detect()            - Walk process tree
-│   ├── getProcessInfo()    - Query process name/cmdline
-│   └── getParentPID()      - Get parent via proc_pidinfo
-│
-├── HookInstaller.swift
-│   ├── HookTarget enum     - Claude, Gemini, Copilot
-│   ├── detect()            - Check if agent config exists
-│   ├── isInstalled()       - Check for existing hooks
-│   ├── install()           - Add hook to config
-│   └── uninstall()         - Remove hook from config
-│
-└── Presets.swift
-    ├── Agent enum          - Known AI agents
-    ├── Preset struct       - Title, icon, sound config
-    └── iconURL()           - Locate icon files
+## Notification Flow
+
+```mermaid
+sequenceDiagram
+    participant CLI as ding CLI
+    participant NM as NotificationManager
+    participant UNC as UNUserNotificationCenter
+    participant NC as Notification Center
+    
+    CLI->>NM: send(title, body, sound)
+    NM->>UNC: checkAuthorizationStatus()
+    alt Not Determined
+        NM->>UNC: requestAuthorization()
+        UNC-->>User: Permission prompt
+        User-->>UNC: Allow/Deny
+    end
+    NM->>UNC: add(request)
+    UNC->>NC: Display notification
 ```
 
-## Notification via osascript
-
-Ding uses AppleScript for notifications:
-
-```applescript
-display notification "Message body" with title "Title" sound name "Glass"
-```
-
-Executed via:
-```swift
-Process().executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-task.arguments = ["-e", script]
-```
-
-### Supported Sounds
-
-macOS system sounds (in `/System/Library/Sounds/`):
-- `Basso`, `Blow`, `Bottle`, `Frog`, `Funk`
-- `Glass`, `Hero`, `Morse`, `Ping`, `Pop`
-- `Purr`, `Sosumi`, `Submarine`, `Tink`
-
-## Hook Formats for AI Agents
+## Hook Formats
 
 ### Claude Code (`~/.claude/settings.json`)
 
@@ -181,7 +201,7 @@ macOS system sounds (in `/System/Library/Sounds/`):
     "Stop": [{
       "hooks": [{
         "type": "command",
-        "command": "/usr/local/bin/ding \"Claude finished\" -t \"Claude Code\"",
+        "command": "/Applications/Ding.app/Contents/MacOS/ding \"Claude finished\" -t \"Claude Code\"",
         "timeout": 5000
       }]
     }]
@@ -197,7 +217,7 @@ macOS system sounds (in `/System/Library/Sounds/`):
     "AfterAgent": [{
       "hooks": [{
         "type": "command",
-        "command": "/usr/local/bin/ding \"Gemini finished\" -t \"Gemini CLI\"",
+        "command": "/Applications/Ding.app/Contents/MacOS/ding \"Gemini finished\" -t \"Gemini CLI\"",
         "timeout": 5000
       }]
     }]
@@ -205,7 +225,7 @@ macOS system sounds (in `/System/Library/Sounds/`):
 }
 ```
 
-### GitHub Copilot (`.github/hooks/toasty.json` in repo)
+### GitHub Copilot (`.github/hooks/toasty.json`)
 
 ```json
 {
@@ -225,53 +245,47 @@ macOS system sounds (in `/System/Library/Sounds/`):
 ## Icon Resolution
 
 Icons are looked up in order:
-1. `~/.ding/icons/<agent>.png` - User-installed
-2. `/usr/local/share/ding/icons/<agent>.png` - System-installed
-3. `<executable_dir>/icons/<agent>.png` - Portable/development
+1. `Ding.app/Contents/Resources/icons/<agent>.png` - App bundle (primary)
+2. `~/.ding/icons/<agent>.png` - User-installed
+3. `/usr/local/share/ding/icons/<agent>.png` - System-installed
 
-## Platform Differences from Windows (Toasty)
+## Versioning
 
-| Feature | Windows (Toasty) | macOS (Ding) |
-|---------|------------------|--------------|
-| Notifications | WinRT Toast API | osascript |
-| Process detection | Toolhelp32 API | sysctl/libproc |
-| App registration | Start Menu shortcut + AUMID | Not required |
-| Click-to-focus | Protocol handler | Not supported |
-| Icon embedding | RC resources | External files |
-| Binary size | ~250 KB | ~1.6 MB |
-| Language | C++/WinRT | Swift |
+Version is stored in `VERSION` file and read at runtime.
 
-### Why No Click-to-Focus on macOS?
+```bash
+# Release a new version
+./scripts/release.sh 1.2.0
+git push origin main --tags
+```
 
-macOS has stricter security around window focus:
-- Apps cannot programmatically steal focus
-- AppleScript `activate` only works for specific apps
-- No protocol handler equivalent for CLI tools
-- Would require a proper app bundle with Accessibility permissions
+The release script:
+1. Updates `VERSION` file
+2. Commits the change
+3. Creates git tag `v1.2.0`
+4. GitHub Actions builds and publishes release
 
 ## Troubleshooting
 
 ### Notifications not appearing
 
-1. Check System Settings → Notifications → Script Editor (or Terminal)
-2. Ensure "Allow notifications" is enabled
-3. osascript notifications inherit permissions from the calling app
+1. Check System Settings → Notifications → Ding is enabled
+2. Ensure Focus/Do Not Disturb is off
+3. Run `ding "Test"` to trigger permission prompt
+
+### "Ding" not in Notification Settings
+
+It only appears after sending at least one notification:
+```bash
+/Applications/Ding.app/Contents/MacOS/ding "Test" -t "Test"
+```
 
 ### Process detection not working
 
-Use `--debug` flag to see the process tree walk:
+Use `--debug` flag:
 ```bash
 ding "Test" --debug
 ```
-
-Output shows each ancestor process and command line.
-
-### Hooks not firing
-
-1. **Restart the AI agent** after changing settings
-2. Check the hook JSON format - nested `hooks` array is required
-3. Test ding directly first: `ding "Test" -t "Test"`
-4. Check config file exists and is valid JSON
 
 ### Build errors
 
@@ -279,8 +293,8 @@ Output shows each ancestor process and command line.
 # Ensure Xcode CLT is installed
 xcode-select --install
 
-# Reset package cache if needed
-swift package reset
+# Reset package cache
+swift package clean
 swift package resolve
 ```
 
@@ -288,8 +302,9 @@ swift package resolve
 
 1. Fork the repository
 2. Create a feature branch
-3. Make changes with tests
-4. Submit a pull request
+3. Make changes
+4. Run `./scripts/build-app.sh` to test
+5. Submit a pull request
 
 ### Code Style
 

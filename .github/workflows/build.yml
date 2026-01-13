@@ -19,21 +19,18 @@ jobs:
     - name: Show Swift version
       run: swift --version
     
-    - name: Build (Debug)
-      run: swift build
-    
-    - name: Build (Release)
-      run: swift build -c release
+    - name: Build Ding.app
+      run: ./scripts/build-app.sh --release
     
     - name: Test CLI
       run: |
-        .build/release/ding --version
-        .build/release/ding --help
-        .build/release/ding status
+        ./Ding.app/Contents/MacOS/ding --version
+        ./Ding.app/Contents/MacOS/ding --help
+        ./Ding.app/Contents/MacOS/ding status
     
     - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
-        name: ding-macos-arm64
-        path: .build/release/ding
+        name: Ding.app
+        path: Ding.app/
         if-no-files-found: error

@@ -1,100 +1,127 @@
 import Foundation
+import UserNotifications
 
-/// Manages macOS notifications using osascript (works for command-line tools)
-final class NotificationManager {
+/// Manages macOS notifications using UNUserNotificationCenter
+/// Requires app bundle with proper Info.plist for notifications to work
+final class NotificationManager: NSObject {
     static let shared = NotificationManager()
     
-    private init() {}
+    private let center = UNUserNotificationCenter.current()
+    private var permissionGranted = false
     
-    /// Send a notification using osascript
+    private override init() {
+        super.init()
+        center.delegate = self
+    }
+    
+    /// Request notification permissions
+    /// - Returns: true if permission granted
+    func requestPermission() async -> Bool {
+        do {
+            let granted = try await center.requestAuthorization(options: [.alert, .sound, .badge])
+            permissionGranted = granted
+            if !granted {
+                fputs("Warning: Notification permission denied. Enable in System Settings → Notifications → Ding\n", stderr)
+            }
+            return granted
+        } catch {
+            fputs("Error requesting notification permission: \(error.localizedDescription)\n", stderr)
+            return false
+        }
+    }
+    
+    /// Check current authorization status
+    func checkAuthorizationStatus() async -> UNAuthorizationStatus {
+        let settings = await center.notificationSettings()
+        return settings.authorizationStatus
+    }
+    
+    /// Send a notification
     /// - Parameters:
     ///   - title: Notification title
     ///   - body: Notification body message
     ///   - sound: Sound name (e.g., "Glass", "Ping", "default")
-    ///   - iconURL: Optional URL to an icon image (not supported via osascript)
+    ///   - iconURL: Optional URL to an icon image
     func send(title: String, body: String, sound: String = "default", iconURL: URL? = nil) async {
-        // Escape quotes in the strings for AppleScript
-        let escapedTitle = title.replacingOccurrences(of: "\"", with: "\\\"")
-        let escapedBody = body.replacingOccurrences(of: "\"", with: "\\\"")
+        // Check/request permission
+        let status = await checkAuthorizationStatus()
         
-        // Build AppleScript command
-        var script = """
-        display notification "\(escapedBody)" with title "\(escapedTitle)"
-        """
-        
-        // Add sound if specified (not "default" - the system handles that)
-        if sound != "default" && !sound.isEmpty {
-            script += " sound name \"\(sound)\""
+        switch status {
+        case .notDetermined:
+            let granted = await requestPermission()
+            if !granted { return }
+        case .denied:
+            fputs("Error: Notifications disabled. Enable in System Settings → Notifications → Ding\n", stderr)
+            return
+        case .authorized, .provisional, .ephemeral:
+            break
+        @unknown default:
+            break
         }
         
-        // Execute via osascript
-        let task = Process()
-        task.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-        task.arguments = ["-e", script]
+        // Build notification content
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = body
         
-        // Capture any errors
-        let errorPipe = Pipe()
-        task.standardError = errorPipe
+        // Set sound
+        if sound == "default" || sound.isEmpty {
+            content.sound = .default
+        } else {
+            // Try system sound first, then custom
+            content.sound = UNNotificationSound(named: UNNotificationSoundName(rawValue: sound))
+        }
+        
+        // Add icon as attachment if provided and exists
+        if let iconURL = iconURL, FileManager.default.fileExists(atPath: iconURL.path) {
+            do {
+                // UNNotificationAttachment requires the file to be copied to a temp location
+                let tempDir = FileManager.default.temporaryDirectory
+                let tempIconURL = tempDir.appendingPathComponent("ding_icon_\(UUID().uuidString).png")
+                
+                try FileManager.default.copyItem(at: iconURL, to: tempIconURL)
+                
+                let attachment = try UNNotificationAttachment(
+                    identifier: "icon",
+                    url: tempIconURL,
+                    options: [UNNotificationAttachmentOptionsTypeHintKey: "public.png"]
+                )
+                content.attachments = [attachment]
+            } catch {
+                // Icon attachment failed, continue without it (non-fatal)
+            }
+        }
+        
+        // Create and deliver the notification request
+        let request = UNNotificationRequest(
+            identifier: UUID().uuidString,
+            content: content,
+            trigger: nil // Deliver immediately
+        )
         
         do {
-            try task.run()
-            task.waitUntilExit()
-            
-            if task.terminationStatus != 0 {
-                let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
-                if let errorMessage = String(data: errorData, encoding: .utf8), !errorMessage.isEmpty {
-                    fputs("Warning: Notification may have failed: \(errorMessage)\n", stderr)
-                }
-            }
+            try await center.add(request)
         } catch {
-            fputs("Error: Failed to send notification: \(error.localizedDescription)\n", stderr)
+            fputs("Error sending notification: \(error.localizedDescription)\n", stderr)
         }
     }
+}
+
+// MARK: - UNUserNotificationCenterDelegate
+extension NotificationManager: UNUserNotificationCenterDelegate {
+    /// Handle notifications when app is in foreground (show them anyway)
+    func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        willPresent notification: UNNotification
+    ) async -> UNNotificationPresentationOptions {
+        return [.banner, .sound]
+    }
     
-    /// Alternative: Use terminal-notifier if available (supports more features)
-    func sendWithTerminalNotifier(title: String, body: String, sound: String = "default", iconURL: URL? = nil) async {
-        // Check if terminal-notifier is available
-        let whichTask = Process()
-        whichTask.executableURL = URL(fileURLWithPath: "/usr/bin/which")
-        whichTask.arguments = ["terminal-notifier"]
-        
-        let pipe = Pipe()
-        whichTask.standardOutput = pipe
-        whichTask.standardError = FileHandle.nullDevice
-        
-        do {
-            try whichTask.run()
-            whichTask.waitUntilExit()
-            
-            if whichTask.terminationStatus == 0 {
-                // terminal-notifier is available
-                let notifierPath = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
-                    .trimmingCharacters(in: .whitespacesAndNewlines) ?? "terminal-notifier"
-                
-                let task = Process()
-                task.executableURL = URL(fileURLWithPath: notifierPath)
-                
-                var args = ["-title", title, "-message", body]
-                
-                if sound != "default" && !sound.isEmpty {
-                    args += ["-sound", sound]
-                }
-                
-                if let iconURL = iconURL {
-                    args += ["-contentImage", iconURL.path]
-                }
-                
-                task.arguments = args
-                
-                try task.run()
-                task.waitUntilExit()
-                return
-            }
-        } catch {
-            // Fall through to osascript
-        }
-        
-        // Fallback to osascript
-        await send(title: title, body: body, sound: sound, iconURL: iconURL)
+    /// Handle notification click
+    func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        didReceive response: UNNotificationResponse
+    ) async {
+        // Could implement click actions here in the future
     }
 }

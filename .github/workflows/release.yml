@@ -18,27 +18,26 @@ jobs:
     - name: Select Xcode
       run: sudo xcode-select -s /Applications/Xcode_16.2.app/Contents/Developer
     
-    - name: Build (Release)
-      run: swift build -c release
+    - name: Build Ding.app
+      run: ./scripts/build-app.sh --release
     
-    - name: Prepare release
+    - name: Show app info
       run: |
-        mkdir -p release
-        cp .build/release/ding release/
-        cp -r Resources/icons release/
-        
-        # Show binary info
-        file release/ding
-        ls -lh release/ding
+        ls -la Ding.app/Contents/
+        ls -la Ding.app/Contents/MacOS/
+        file Ding.app/Contents/MacOS/ding
+        cat Ding.app/Contents/Info.plist
     
-    - name: Create archive
+    - name: Create archives
       run: |
-        cd release
-        tar -czvf ../ding-macos-arm64.tar.gz ding icons/
-        cd ..
+        # Create zip of the app bundle (preferred for macOS apps)
+        zip -r Ding-macos-arm64.zip Ding.app
         
-        # Generate checksum
-        shasum -a 256 ding-macos-arm64.tar.gz > checksums.txt
+        # Also create tarball for those who prefer it
+        tar -czvf Ding-macos-arm64.tar.gz Ding.app
+        
+        # Generate checksums
+        shasum -a 256 Ding-macos-arm64.zip Ding-macos-arm64.tar.gz > checksums.txt
         cat checksums.txt
     
     - name: Create Release
@@ -48,32 +47,39 @@ jobs:
         prerelease: false
         generate_release_notes: true
         files: |
-          ding-macos-arm64.tar.gz
+          Ding-macos-arm64.zip
+          Ding-macos-arm64.tar.gz
           checksums.txt
         body: |
           ## Installation
           
-          ### Quick Install (Apple Silicon)
+          ### Quick Install (Recommended)
           ```bash
           # Download and extract
-          curl -L https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/ding-macos-arm64.tar.gz | tar xz
+          curl -L https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/Ding-macos-arm64.zip -o Ding.zip
+          unzip Ding.zip
           
-          # Install
-          sudo mv ding /usr/local/bin/
-          mkdir -p ~/.ding && mv icons ~/.ding/
+          # Move to Applications
+          mv Ding.app /Applications/
           
-          # Verify
-          ding --version
+          # Create CLI symlink (optional, for terminal usage)
+          sudo ln -sf /Applications/Ding.app/Contents/MacOS/ding /usr/local/bin/ding
+          
+          # Run once to register for notifications
+          /Applications/Ding.app/Contents/MacOS/ding "Ding installed!" -t "Welcome"
           ```
           
           ### Manual Install
-          1. Download `ding-macos-arm64.tar.gz`
-          2. Extract: `tar xzf ding-macos-arm64.tar.gz`
-          3. Move to PATH: `sudo mv ding /usr/local/bin/`
-          4. Install icons (optional): `mkdir -p ~/.ding && mv icons ~/.ding/`
+          1. Download `Ding-macos-arm64.zip`
+          2. Unzip and drag `Ding.app` to `/Applications/`
+          3. For CLI usage: `sudo ln -sf /Applications/Ding.app/Contents/MacOS/ding /usr/local/bin/ding`
           
-          > **Note**: This release is for Apple Silicon (M1/M2/M3) Macs only.
-          > Intel Mac users can build from source: `swift build -c release`
+          ### First Run
+          On first notification, macOS will ask for permission. Click "Allow" to enable notifications.
+          You can manage Ding's notification settings in **System Settings → Notifications → Ding**.
+          
+          > **Note**: This release is for Apple Silicon (M1/M2/M3/M4) Macs.
+          > Intel Mac users can build from source: `./scripts/build-app.sh --release`
           
           ## Quick Start
           ```bash

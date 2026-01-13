@@ -1,6 +1,6 @@
 # Ding!
 
-A tiny macOS notification CLI built in Swift that hooks into Coding Agents so you get notified when their long running tasks finish. Native, lightweight, no dependencies.
+A tiny macOS notification CLI built in Swift that hooks into Coding Agents so you get notified when their long running tasks finish. Native, lightweight, shows up in System Settings → Notifications.
 
 **Inspired by [shanselman/toasty](https://github.com/shanselman/toasty)** - the Windows version of this tool. Credit to Scott Hanselman for the original idea!
 
@@ -10,7 +10,44 @@ A tiny macOS notification CLI built in Swift that hooks into Coding Agents so yo
 ding "Hello World" -t "Ding"
 ```
 
-That's it. Ding sends a native macOS notification.
+That's it. Ding sends a native macOS notification and appears in your Notification Center.
+
+## Installation
+
+### Download Release (Recommended)
+
+```bash
+# Download latest release
+curl -L https://github.com/YOUR_USERNAME/ding/releases/latest/download/Ding-macos-arm64.zip -o Ding.zip
+unzip Ding.zip
+
+# Install to Applications
+mv Ding.app /Applications/
+
+# Create CLI symlink
+sudo ln -sf /Applications/Ding.app/Contents/MacOS/ding /usr/local/bin/ding
+
+# Test it
+ding "Ding installed!" -t "Welcome"
+```
+
+### Build from Source
+
+```bash
+git clone https://github.com/YOUR_USERNAME/ding.git
+cd ding
+./scripts/build-app.sh --release
+
+# Install
+cp -r Ding.app /Applications/
+sudo ln -sf /Applications/Ding.app/Contents/MacOS/ding /usr/local/bin/ding
+```
+
+### First Run - Enable Notifications
+
+On the first notification, macOS will prompt for permission. Click **Allow**.
+
+You can manage Ding's notifications in: **System Settings → Notifications → Ding**
 
 ## Usage
 
@@ -118,7 +155,7 @@ Add to `~/.claude/settings.json`:
         "hooks": [
           {
             "type": "command",
-            "command": "/usr/local/bin/ding \"Claude finished\" -t \"Claude Code\"",
+            "command": "/Applications/Ding.app/Contents/MacOS/ding \"Claude finished\" -t \"Claude Code\"",
             "timeout": 5000
           }
         ]
@@ -140,7 +177,7 @@ Add to `~/.gemini/settings.json`:
         "hooks": [
           {
             "type": "command",
-            "command": "/usr/local/bin/ding \"Gemini finished\" -t \"Gemini CLI\"",
+            "command": "/Applications/Ding.app/Contents/MacOS/ding \"Gemini finished\" -t \"Gemini CLI\"",
             "timeout": 5000
           }
         ]
@@ -169,57 +206,23 @@ Add to `.github/hooks/toasty.json`:
 }
 ```
 
-## Building
-
-### Prerequisites
-
-- macOS 12.0+ (Monterey or later)
-- Xcode Command Line Tools: `xcode-select --install`
-
-### Build
-
-```bash
-# Clone the repo
-git clone https://github.com/yourusername/ding.git
-cd ding
-
-# Debug build
-swift build
-
-# Release build (optimized)
-swift build -c release
-
-# Binary location
-.build/release/ding
-```
-
-### Install System-Wide
-
-```bash
-# Copy to PATH
-sudo cp .build/release/ding /usr/local/bin/
-
-# Make executable (should already be)
-sudo chmod +x /usr/local/bin/ding
-```
-
 ## Project Structure
 
 ```
 ding/
-├── Package.swift           # Swift package manifest
-├── Sources/
-│   └── ding/
-│       ├── main.swift              # CLI entry point
-│       ├── NotificationManager.swift   # macOS notifications
-│       ├── AgentDetector.swift     # Parent process detection
-│       ├── HookInstaller.swift     # JSON config manipulation
-│       └── Presets.swift           # Agent configurations
+├── Package.swift              # Swift package manifest
 ├── Resources/
-│   └── icons/              # Agent icons (optional)
-│       ├── claude.png
-│       ├── copilot.png
-│       └── gemini.png
+│   ├── Info.plist             # App bundle configuration
+│   └── icons/                 # Agent icons
+├── Sources/ding/
+│   ├── main.swift             # CLI entry point
+│   ├── NotificationManager.swift   # UNUserNotificationCenter wrapper
+│   ├── AgentDetector.swift    # Parent process detection
+│   ├── HookInstaller.swift    # JSON config manipulation
+│   └── Presets.swift          # Agent configurations
+├── scripts/
+│   ├── build-app.sh           # Build Ding.app bundle
+│   └── release.sh             # Version bump and tag
 └── README.md
 ```
 
@@ -227,9 +230,18 @@ ding/
 
 ### Notifications Not Appearing
 
-1. Check System Settings → Notifications → Script Editor (or Terminal)
-2. Ensure "Allow notifications" is enabled
-3. Ding uses `osascript` which inherits notification permissions from the calling terminal
+1. **Check notification permissions**: System Settings → Notifications → Ding
+2. **Make sure Ding is allowed** and set to Banners or Alerts
+3. **Check Focus mode** is not blocking notifications
+4. **Run ding once** to trigger the permission prompt
+
+### "Ding" Not in Notification Settings
+
+Ding only appears in Notification Settings after it has sent at least one notification. Run:
+
+```bash
+/Applications/Ding.app/Contents/MacOS/ding "Test" -t "Test"
+```
 
 ### Permission Issues
 
@@ -250,24 +262,6 @@ Use `--debug` to see parent process detection:
 ```bash
 ding "Test" --debug
 ```
-
-This shows the process tree walk and which agent was detected.
-
-## How It Works
-
-### Parent Process Detection
-
-Ding walks up the process tree using macOS `sysctl` APIs to find known AI CLI tools:
-
-1. Get parent PID with `getppid()`
-2. Query process info with `proc_pidinfo` 
-3. Get command line with `sysctl(KERN_PROCARGS2)`
-4. Match against known patterns (claude, gemini, copilot, etc.)
-5. Apply appropriate preset if found
-
-### Notification Delivery
-
-Ding uses `osascript` to send notifications, which works reliably for command-line tools without requiring a bundle identifier or app registration.
 
 ## License
 
