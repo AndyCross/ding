@@ -1,6 +1,23 @@
 import Foundation
 import ArgumentParser
 
+/// Read version from VERSION file at compile time, fallback to default
+let appVersion: String = {
+    // Try to read VERSION file relative to source
+    let versionPaths = [
+        URL(fileURLWithPath: #file).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("VERSION"),
+        URL(fileURLWithPath: "/usr/local/share/ding/VERSION"),
+        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".ding/VERSION")
+    ]
+    
+    for path in versionPaths {
+        if let version = try? String(contentsOf: path, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines) {
+            return version
+        }
+    }
+    return "1.0.0"  // Fallback
+}()
+
 struct Ding: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "ding",
@@ -19,7 +36,7 @@ struct Ding: ParsableCommand {
             
             Credits: Inspired by shanselman/toasty
             """,
-        version: "1.0.0",
+        version: appVersion,
         subcommands: [Notify.self, Install.self, Uninstall.self, Status.self],
         defaultSubcommand: Notify.self
     )
