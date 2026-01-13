@@ -9,7 +9,7 @@ permissions:
   contents: write
 
 jobs:
-  build-arm64:
+  build:
     runs-on: macos-15  # macOS Sequoia Apple Silicon
     
     steps:
@@ -21,101 +21,24 @@ jobs:
     - name: Build (Release)
       run: swift build -c release
     
-    - name: Prepare artifact
-      run: |
-        mkdir -p dist
-        cp .build/release/ding dist/ding-macos-arm64
-        # Copy icons for distribution
-        cp -r Resources/icons dist/
-    
-    - name: Upload artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: ding-macos-arm64
-        path: dist/
-        if-no-files-found: error
-
-  build-x86_64:
-    runs-on: macos-15-large  # macOS Sequoia Intel (x86_64)
-    
-    steps:
-    - uses: actions/checkout@v4
-    
-    - name: Select Xcode
-      run: sudo xcode-select -s /Applications/Xcode_16.2.app/Contents/Developer
-    
-    - name: Build (Release)
-      run: swift build -c release
-    
-    - name: Prepare artifact
-      run: |
-        mkdir -p dist
-        cp .build/release/ding dist/ding-macos-x86_64
-    
-    - name: Upload artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: ding-macos-x86_64
-        path: dist/ding-macos-x86_64
-        if-no-files-found: error
-
-  release:
-    needs: [build-arm64, build-x86_64]
-    runs-on: macos-15
-    
-    steps:
-    - uses: actions/checkout@v4
-    
-    - name: Download ARM64 artifact
-      uses: actions/download-artifact@v4
-      with:
-        name: ding-macos-arm64
-        path: arm64/
-    
-    - name: Download x86_64 artifact
-      uses: actions/download-artifact@v4
-      with:
-        name: ding-macos-x86_64
-        path: x86_64/
-    
-    - name: Create Universal Binary
+    - name: Prepare release
       run: |
         mkdir -p release
+        cp .build/release/ding release/
+        cp -r Resources/icons release/
         
-        # Create universal binary
-        lipo -create \
-          arm64/ding-macos-arm64 \
-          x86_64/ding-macos-x86_64 \
-          -output release/ding
-        
-        # Make executable
-        chmod +x release/ding
-        
-        # Copy icons
-        cp -r arm64/icons release/
-        
-        # Verify
+        # Show binary info
         file release/ding
-        lipo -info release/ding
+        ls -lh release/ding
     
-    - name: Create archives
+    - name: Create archive
       run: |
         cd release
-        
-        # Universal binary archive (recommended)
-        tar -czvf ../ding-macos-universal.tar.gz ding icons/
-        
-        # Individual architecture archives
-        cp ../arm64/ding-macos-arm64 ding-arm64
-        tar -czvf ../ding-macos-arm64.tar.gz ding-arm64 icons/
-        
-        cp ../x86_64/ding-macos-x86_64 ding-x86_64  
-        tar -czvf ../ding-macos-x86_64.tar.gz ding-x86_64
-        
+        tar -czvf ../ding-macos-arm64.tar.gz ding icons/
         cd ..
         
-        # Generate checksums
-        shasum -a 256 ding-macos-*.tar.gz > checksums.txt
+        # Generate checksum
+        shasum -a 256 ding-macos-arm64.tar.gz > checksums.txt
         cat checksums.txt
     
     - name: Create Release
@@ -125,17 +48,15 @@ jobs:
         prerelease: false
         generate_release_notes: true
         files: |
-          ding-macos-universal.tar.gz
           ding-macos-arm64.tar.gz
-          ding-macos-x86_64.tar.gz
           checksums.txt
         body: |
           ## Installation
           
-          ### Quick Install (Universal Binary - recommended)
+          ### Quick Install (Apple Silicon)
           ```bash
           # Download and extract
-          curl -L https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/ding-macos-universal.tar.gz | tar xz
+          curl -L https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/ding-macos-arm64.tar.gz | tar xz
           
           # Install
           sudo mv ding /usr/local/bin/
@@ -145,16 +66,14 @@ jobs:
           ding --version
           ```
           
-          ### Homebrew (coming soon)
-          ```bash
-          brew install ding
-          ```
-          
           ### Manual Install
-          1. Download `ding-macos-universal.tar.gz` (works on both Intel and Apple Silicon)
-          2. Extract: `tar xzf ding-macos-universal.tar.gz`
+          1. Download `ding-macos-arm64.tar.gz`
+          2. Extract: `tar xzf ding-macos-arm64.tar.gz`
           3. Move to PATH: `sudo mv ding /usr/local/bin/`
           4. Install icons (optional): `mkdir -p ~/.ding && mv icons ~/.ding/`
+          
+          > **Note**: This release is for Apple Silicon (M1/M2/M3) Macs only.
+          > Intel Mac users can build from source: `swift build -c release`
           
           ## Quick Start
           ```bash
